@@ -6,14 +6,17 @@ const router = express.Router();
 
 router.post(
     "/clerk",
-    // IMPORTANT: raw body is required for Clerk webhook verification
+    // ⚠️ IMPORTANT: raw body is REQUIRED for Clerk webhook verification
     express.raw({ type: "application/json" }),
     async (req, res) => {
         const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
 
         if (!WEBHOOK_SECRET) {
-            console.error("❌ CLERK_WEBHOOK_SECRET missing");
-            return res.status(500).json({ message: "Webhook secret not configured" });
+            console.error("❌ CLERK_WEBHOOK_SECRET is missing");
+            return res.status(500).json({
+                success: false,
+                message: "Webhook secret not configured",
+            });
         }
 
         // Clerk / Svix headers
@@ -25,13 +28,18 @@ router.post(
 
         let event;
 
-        // ✅ Verify webhook signature
+        // ===============================
+        // VERIFY WEBHOOK SIGNATURE
+        // ===============================
         try {
             const wh = new Webhook(WEBHOOK_SECRET);
             event = wh.verify(req.body, svixHeaders);
         } catch (err) {
             console.error("❌ Webhook verification failed:", err.message);
-            return res.status(400).json({ message: "Invalid webhook signature" });
+            return res.status(400).json({
+                success: false,
+                message: "Invalid webhook signature",
+            });
         }
 
         try {
@@ -41,14 +49,16 @@ router.post(
             if (event.type === "user.created") {
                 const user = event.data;
 
-                // ✅ Correct way to get primary email from Clerk
-                const primaryEmail = user.email_addresses?.find(
-                    (email) => email.id === user.primary_email_address_id
-                )?.email_address;
+                // ✅ Primary email with fallback (REQUIRED for OAuth users)
+                const primaryEmail =
+                    user.email_addresses?.find(
+                        (email) => email.id === user.primary_email_address_id
+                    )?.email_address ||
+                    user.email_addresses?.[0]?.email_address;
 
-                // Safety check
+                // Safety check (never crash webhook)
                 if (!primaryEmail) {
-                    console.warn("⚠️ No primary email found for user:", user.id);
+                    console.warn("⚠️ No email found for user:", user.id);
                     return res.status(200).json({ success: true });
                 }
 
@@ -80,6 +90,9 @@ router.post(
                 console.log("🗑️ User deleted from MongoDB:", event.data.id);
             }
 
+            // ===============================
+            // SUCCESS RESPONSE
+            // ===============================
             return res.status(200).json({ success: true });
         } catch (error) {
             console.error("❌ Webhook handler error:", error.message);
